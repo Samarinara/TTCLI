@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Autotype } from "./Autotype";
 import { Crown, Send, User as UserIcon, Users } from "lucide-react";
+import { db, isFirebaseConfigured } from "@/lib/firebase";
+import { ref, onValue, set, push, onDisconnect, serverTimestamp } from "firebase/database";
 
 // --- Main Terminal Component ---
 export function WhisperNetTerminal() {
@@ -16,126 +18,115 @@ export function WhisperNetTerminal() {
   const [users, setUsers] = useState<User[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [gmId, setGmId] = useState<string | null>(null);
+  const firebaseConfigured = isFirebaseConfigured();
 
-  const LOCAL_STORAGE_PREFIX = "whispernet_";
-
-  // --- State Synchronization with LocalStorage ---
-  const loadState = useCallback(() => {
-    try {
-      const storedUser = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}user`);
-      const storedIsGm = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}is_gm`);
-      const storedUsers = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}users`);
-      const storedMessages = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}messages`);
-      const storedGmId = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}gm_id`);
-
-      if (storedUser) setCurrentUser(JSON.parse(storedUser));
-      if (storedIsGm) setIsGm(JSON.parse(storedIsGm));
-      if (storedUsers) setUsers(JSON.parse(storedUsers));
-      if (storedMessages) setMessages(JSON.parse(storedMessages));
-      if (storedGmId) setGmId(JSON.parse(storedGmId));
-
-    } catch (error) {
-      console.error("Failed to load state from localStorage", error);
-    }
-  }, []);
-
+  // --- Firebase Listeners ---
   useEffect(() => {
-    loadState();
-    window.addEventListener('storage', loadState);
-    return () => window.removeEventListener('storage', loadState);
-  }, [loadState]);
+    if (!firebaseConfigured || !db) return;
 
-  const saveState = useCallback((key: string, value: any) => {
-    try {
-      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}${key}`, JSON.stringify(value));
-      // Manually dispatch a storage event to sync tabs
-      window.dispatchEvent(new StorageEvent('storage', {
-          key: `${LOCAL_STORAGE_PREFIX}${key}`,
-          newValue: JSON.stringify(value)
-      }));
-    } catch (error) {
-      console.error("Failed to save state to localStorage", error);
-    }
-  }, []);
+    const usersRef = ref(db, 'users');
+    const messagesRef = ref(db, 'messages');
+    const gmIdRef = ref(db, 'gmId');
+
+    const usersListener = onValue(usersRef, (snapshot) => {
+      const data = snapshot.val();
+      setUsers(data ? Object.values(data) : []);
+    });
+
+    const messagesListener = onValue(messagesRef, (snapshot) => {
+      const data = snapshot.val();
+      const loadedMessages = data ? Object.values(data) : [];
+      // Sort messages by timestamp
+      loadedMessages.sort((a: any, b: any) => a.timestamp - b.timestamp);
+      setMessages(loadedMessages as Message[]);
+    });
+
+    const gmIdListener = onValue(gmIdRef, (snapshot) => {
+      const data = snapshot.val();
+      setGmId(data);
+      if (currentUser) {
+        setIsGm(currentUser.id === data);
+      }
+    });
+
+    return () => {
+      usersListener();
+      messagesListener();
+      gmIdListener();
+    };
+  }, [currentUser, firebaseConfigured]);
 
   // --- Core Actions ---
   const handleLogin = (name: string) => {
-    // We get the latest gmId from localStorage directly to have the most up-to-date value.
-    const currentGmId = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}gm_id`) || 'null');
-    const currentUsers = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}users`) || '[]');
-
+    if (!firebaseConfigured || !db) return;
     const newUser: User = { id: crypto.randomUUID(), name };
     setCurrentUser(newUser);
-    saveState("user", newUser);
-    
-    const updatedUsers = [...currentUsers, newUser];
-    setUsers(updatedUsers);
-    saveState("users", updatedUsers);
-    
-    if (!currentGmId) {
-      setIsGm(true);
-      setGmId(newUser.id);
-      saveState("is_gm", true);
-      saveState("gm_id", newUser.id);
-      addMessage(`SYSTEM: ${newUser.name} has initiated the session as Game Master.`, 'system');
-    } else {
-        setIsGm(false);
-        saveState("is_gm", false);
-        setGmId(currentGmId);
+
+    const userRef = ref(db, `users/${newUser.id}`);
+    set(userRef, newUser);
+    onDisconnect(userRef).remove();
+
+    const gmIdRef = ref(db, 'gmId');
+    onValue(gmIdRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        set(gmIdRef, newUser.id);
+        setIsGm(true);
+        addMessage(`SYSTEM: ${newUser.name} has initiated the session as Game Master.`, 'system');
+         onDisconnect(gmIdRef).remove(); // If GM disconnects, clear the GM ID
+      } else {
         addMessage(`SYSTEM: ${newUser.name} has connected.`, 'system');
-    }
+      }
+    }, { onlyOnce: true });
   };
-  
+
   const addMessage = (text: string, type: Message['type'], sender?: string) => {
-    const newMessage: Message = {
-      id: crypto.randomUUID(),
+    if (!firebaseConfigured || !db) return;
+    const messagesRef = ref(db, 'messages');
+    const newMessageRef = push(messagesRef);
+    const newMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: object } = {
       text,
       sender: sender || (currentUser?.name ?? "Unknown"),
       type,
-      timestamp: Date.now(),
+      timestamp: serverTimestamp(),
     };
-    const updatedMessages = [...JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}messages`) || '[]'), newMessage];
-    setMessages(updatedMessages);
-    saveState("messages", updatedMessages);
+    set(newMessageRef, newMessage);
   };
-  
+
   const transferGm = (newGmId: string) => {
+    if (!firebaseConfigured || !db) return;
     const newGm = users.find(u => u.id === newGmId);
     if (!newGm || !currentUser || !isGm) return;
-    
-    setGmId(newGmId);
-    saveState("gm_id", newGmId);
-    
-    // The current user is no longer GM
-    if(currentUser.id === gmId) {
-        setIsGm(false);
-        saveState("is_gm", false);
-    }
 
+    const gmIdRef = ref(db, 'gmId');
+    set(gmIdRef, newGmId);
+    onDisconnect(gmIdRef).remove(); // Ensure the new GM is also removed on disconnect
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
-    
-    // Note: The new GM's `isGm` state will update on their client 
-    // via the 'storage' event listener, which will see the `gm_id` change.
-    // To make it more robust in case the event is missed, we can have a check.
-    if(currentUser.id === newGmId) {
-        setIsGm(true);
-        saveState("is_gm", true);
-    }
   };
 
   useEffect(() => {
-    // This effect ensures that if the gmId changes in localStorage,
-    // the component's isGm state is correctly updated.
     if (currentUser && gmId) {
-      const shouldBeGm = currentUser.id === gmId;
-      if (shouldBeGm !== isGm) {
-        setIsGm(shouldBeGm);
-        saveState("is_gm", shouldBeGm);
-      }
+      setIsGm(currentUser.id === gmId);
     }
-  }, [currentUser, gmId, isGm, saveState]);
+  }, [currentUser, gmId]);
 
 
+  if (!firebaseConfigured) {
+    return (
+        <div className="flex items-center justify-center h-screen w-screen p-4">
+            <Card className="w-full max-w-lg bg-transparent border-dashed text-center">
+                <CardHeader>
+                    <CardTitle className="text-shadow-glow text-destructive">FIREBASE NOT CONFIGURED</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <p>This application requires a Firebase Realtime Database to function.</p>
+                    <p>Please create a Firebase project, enable the Realtime Database, and paste your configuration object into the <code className="bg-muted p-1 rounded">src/lib/firebase.ts</code> file.</p>
+                    <p>You can find your config in your Firebase project settings.</p>
+                </CardContent>
+            </Card>
+        </div>
+    )
+  }
+  
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
@@ -158,7 +149,7 @@ export function WhisperNetTerminal() {
 function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
   const [name, setName] = useState('');
   const [booting, setBooting] = useState(true);
-  
+
   useEffect(() => {
     const timer = setTimeout(() => setBooting(false), 1500);
     return () => clearTimeout(timer);
@@ -221,23 +212,19 @@ function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], cur
         }
     }
   }, [messages]);
-  
+
   const filteredMessages = messages.filter(msg => {
       if (msg.type === 'system' || msg.type === 'broadcast') return true;
       if (isGm) return true; // GM sees all
       if (msg.sender === currentUser.name) return true; // Player sees their own DMs
-      // This is tricky. A player needs to see DMs *they* sent to the GM.
-      // And they need to see DMs the GM sent to *them*.
-      // The current logic doesn't support GM-to-player DMs.
-      // For now, players only see their own private messages.
       return false;
   });
 
   return (
     <ScrollArea className="flex-grow p-2" ref={scrollAreaRef}>
       <div className="space-y-2">
-        {filteredMessages.map((msg) => (
-          <div key={msg.id}>
+        {filteredMessages.map((msg, index) => (
+          <div key={msg.id || index}>
             <Autotype
               text={`${getPrefix(msg, currentUser, isGm)} ${msg.text}`}
               className={msg.type === 'system' ? 'text-accent-foreground' : ''}

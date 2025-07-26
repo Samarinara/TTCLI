@@ -64,34 +64,12 @@
 }
 
 @layer utilities {
-  .crt-effect::after {
-    content: ' ';
-    display: block;
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    right: 0;
-    background: repeating-linear-gradient(0deg, hsla(0,0%,0%,0.35) 0px, hsla(0,0%,0%,0.35) 1px, transparent 1px, transparent 2px);
-    opacity: 0.5;
-    pointer-events: none;
-    z-index: 9999;
-  }
-  .crt-effect {
-    animation: flicker 0.1s infinite;
-  }
   .text-shadow-glow {
     text-shadow: 0 0 5px hsl(var(--foreground)), 0 0 10px hsl(var(--foreground));
   }
   .cursor-blink {
     animation: blink 1s step-end infinite;
   }
-}
-
-@keyframes flicker {
-  0% { opacity: 1; }
-  50% { opacity: 0.9; }
-  100% { opacity: 1; }
 }
 
 @keyframes blink {

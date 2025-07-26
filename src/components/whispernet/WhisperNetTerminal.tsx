@@ -48,6 +48,11 @@ export function WhisperNetTerminal() {
   const saveState = useCallback((key: string, value: any) => {
     try {
       localStorage.setItem(`${LOCAL_STORAGE_PREFIX}${key}`, JSON.stringify(value));
+      // Manually dispatch a storage event to sync tabs
+      window.dispatchEvent(new StorageEvent('storage', {
+          key: `${LOCAL_STORAGE_PREFIX}${key}`,
+          newValue: JSON.stringify(value)
+      }));
     } catch (error) {
       console.error("Failed to save state to localStorage", error);
     }
@@ -55,16 +60,18 @@ export function WhisperNetTerminal() {
 
   // --- Core Actions ---
   const handleLogin = (name: string) => {
+    // We get the latest gmId from localStorage directly to have the most up-to-date value.
+    const currentGmId = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}gm_id`) || 'null');
+    const currentUsers = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}users`) || '[]');
+
     const newUser: User = { id: crypto.randomUUID(), name };
     setCurrentUser(newUser);
     saveState("user", newUser);
-
-    const currentUsers = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}users`) || '[]');
+    
     const updatedUsers = [...currentUsers, newUser];
     setUsers(updatedUsers);
     saveState("users", updatedUsers);
     
-    const currentGmId = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_PREFIX}gm_id`) || 'null');
     if (!currentGmId) {
       setIsGm(true);
       setGmId(newUser.id);
@@ -74,6 +81,7 @@ export function WhisperNetTerminal() {
     } else {
         setIsGm(false);
         saveState("is_gm", false);
+        setGmId(currentGmId);
         addMessage(`SYSTEM: ${newUser.name} has connected.`, 'system');
     }
   };
@@ -98,16 +106,35 @@ export function WhisperNetTerminal() {
     setGmId(newGmId);
     saveState("gm_id", newGmId);
     
-    if (currentUser.id === newGmId) {
-        setIsGm(true);
-        saveState("is_gm", true);
-    } else if (currentUser.id === gmId) {
+    // The current user is no longer GM
+    if(currentUser.id === gmId) {
         setIsGm(false);
         saveState("is_gm", false);
     }
 
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
+    
+    // Note: The new GM's `isGm` state will update on their client 
+    // via the 'storage' event listener, which will see the `gm_id` change.
+    // To make it more robust in case the event is missed, we can have a check.
+    if(currentUser.id === newGmId) {
+        setIsGm(true);
+        saveState("is_gm", true);
+    }
   };
+
+  useEffect(() => {
+    // This effect ensures that if the gmId changes in localStorage,
+    // the component's isGm state is correctly updated.
+    if (currentUser && gmId) {
+      const shouldBeGm = currentUser.id === gmId;
+      if (shouldBeGm !== isGm) {
+        setIsGm(shouldBeGm);
+        saveState("is_gm", shouldBeGm);
+      }
+    }
+  }, [currentUser, gmId, isGm, saveState]);
+
 
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
@@ -199,6 +226,10 @@ function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], cur
       if (msg.type === 'system' || msg.type === 'broadcast') return true;
       if (isGm) return true; // GM sees all
       if (msg.sender === currentUser.name) return true; // Player sees their own DMs
+      // This is tricky. A player needs to see DMs *they* sent to the GM.
+      // And they need to see DMs the GM sent to *them*.
+      // The current logic doesn't support GM-to-player DMs.
+      // For now, players only see their own private messages.
       return false;
   });
 

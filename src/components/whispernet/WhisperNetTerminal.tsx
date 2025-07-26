@@ -14,30 +14,38 @@ import { ref, onValue, set, push, onDisconnect, serverTimestamp, get } from "fir
 // --- Main Terminal Component ---
 export function WhisperNetTerminal() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [isGm, setIsGm] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [gmId, setGmId] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
   const firebaseConfigured = isFirebaseConfigured();
-  
+
   // Effect for client-side only boot sequence
   useEffect(() => {
     const timer = setTimeout(() => {
-        setBooting(false);
+      setBooting(false);
     }, 1500);
     return () => clearTimeout(timer);
   }, []);
 
-
   // --- Firebase Listeners ---
   useEffect(() => {
-    if (!firebaseConfigured || !db || !currentUser) return;
+    if (!firebaseConfigured || !db || !currentUser || !sessionId) return;
 
-    // Set up listeners only when a user is logged in
-    const usersRef = ref(db, 'users');
-    const messagesRef = ref(db, 'messages');
-    const gmIdRef = ref(db, 'gmId');
+    // References are now session-specific
+    const sessionRef = ref(db, `sessions/${sessionId}`);
+    const usersRef = ref(db, `sessions/${sessionId}/users`);
+    const messagesRef = ref(db, `sessions/${sessionId}/messages`);
+    const gmIdRef = ref(db, `sessions/${sessionId}/gmId`);
+    
+    // When the user disconnects, remove them from the session's user list.
+    const userRef = ref(db, `sessions/${sessionId}/users/${currentUser.id}`);
+    onDisconnect(userRef).remove();
+    
+    // When the last user disconnects, remove the entire session
+    onDisconnect(sessionRef).remove();
 
     const usersListener = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
@@ -68,7 +76,7 @@ export function WhisperNetTerminal() {
       messagesListener();
       gmIdListener();
     };
-  }, [currentUser, firebaseConfigured]);
+  }, [currentUser, sessionId, firebaseConfigured]);
 
   // Effect to update isGm state whenever gmId or currentUser changes
   useEffect(() => {
@@ -79,47 +87,40 @@ export function WhisperNetTerminal() {
     }
   }, [currentUser, gmId]);
 
-
   // --- Core Actions ---
-  const handleLogin = async (name: string) => {
+  const handleLogin = async (name: string, newSessionId: string) => {
     if (!firebaseConfigured || !db) return;
     const newUser: User = { id: crypto.randomUUID(), name };
     
-    const userRef = ref(db, `users/${newUser.id}`);
-    const messagesRef = ref(db, 'messages');
-    
-    // When the user disconnects, remove them from the user list.
-    onDisconnect(userRef).remove();
-    
-    // Check if this is the last user. If so, set onDisconnect to clear messages.
-    const usersRef = ref(db, 'users');
-    const snapshot = await get(usersRef);
-    if (!snapshot.exists() || snapshot.numChildren() === 0) {
-        onDisconnect(messagesRef).remove();
-    }
+    // Set user and session ID first
+    setCurrentUser(newUser);
+    setSessionId(newSessionId);
 
+    const userRef = ref(db, `sessions/${newSessionId}/users/${newUser.id}`);
+    const gmIdRef = ref(db, `sessions/${newSessionId}/gmId`);
+    
+    // Check if this user is the first one in the session.
+    const usersRef = ref(db, `sessions/${newSessionId}/users`);
+    const snapshot = await get(usersRef);
 
     set(userRef, newUser).then(() => {
-        const gmIdRef = ref(db, 'gmId');
-        onValue(gmIdRef, (snapshot) => {
-          if (!snapshot.exists()) {
+        if (!snapshot.exists()) {
+            // This is the first user, they become GM.
             set(gmIdRef, newUser.id);
-            addMessage(`SYSTEM: ${name} has initiated the session as Game Master.`, 'system', 'system', newUser);
+            addMessage(`SYSTEM: ${name} has initiated session "${newSessionId}" as Game Master.`, 'system', 'system', newUser, newSessionId);
             onDisconnect(gmIdRef).remove();
-          } else {
-            addMessage(`SYSTEM: ${name} has connected.`, 'system', 'system', newUser);
-          }
-        }, { onlyOnce: true });
-        
-        setCurrentUser(newUser);
+        } else {
+            addMessage(`SYSTEM: ${name} has connected.`, 'system', 'system', newUser, newSessionId);
+        }
     });
   };
 
-  const addMessage = (text: string, type: Message['type'], senderName?: string, user?: User) => {
+  const addMessage = (text: string, type: Message['type'], senderName?: string, user?: User, currentSessionId?: string) => {
     const sender = user || currentUser;
-    if (!firebaseConfigured || !db || !sender) return;
+    const sId = currentSessionId || sessionId;
+    if (!firebaseConfigured || !db || !sender || !sId) return;
 
-    const messagesRef = ref(db, 'messages');
+    const messagesRef = ref(db, `sessions/${sId}/messages`);
     const newMessageRef = push(messagesRef);
     const newMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: object } = {
       text,
@@ -131,19 +132,17 @@ export function WhisperNetTerminal() {
   };
 
   const transferGm = (newGmId: string) => {
-    if (!firebaseConfigured || !db) return;
+    if (!firebaseConfigured || !db || !sessionId) return;
     const newGm = users.find(u => u.id === newGmId);
     if (!newGm || !currentUser || !isGm) return;
 
-    const gmIdRef = ref(db, 'gmId');
+    const gmIdRef = ref(db, `sessions/${sessionId}/gmId`);
     set(gmIdRef, newGmId);
     
-    // The old GM's onDisconnect for gmId needs to be cancelled.
-    const oldGmRef = ref(db, 'gmId');
+    const oldGmRef = ref(db, `sessions/${sessionId}/gmId`);
     onDisconnect(oldGmRef).cancel();
     
-    // Set the new onDisconnect for the new GM
-    const newGmIdRef = ref(db, 'gmId');
+    const newGmIdRef = ref(db, `sessions/${sessionId}/gmId`);
     onDisconnect(newGmIdRef).remove();
 
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
@@ -174,7 +173,7 @@ export function WhisperNetTerminal() {
     )
   }
   
-  if (!currentUser) {
+  if (!currentUser || !sessionId) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
@@ -193,13 +192,14 @@ export function WhisperNetTerminal() {
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (name: string, sessionId: string) => void }) {
   const [name, setName] = useState('');
+  const [sessionId, setSessionId] = useState('');
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim()) {
-      onLogin(name.trim());
+    if (name.trim() && sessionId.trim()) {
+      onLogin(name.trim(), sessionId.trim());
     }
   };
 
@@ -222,6 +222,16 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
                 onChange={(e) => setName(e.target.value)}
                 className="mt-1 bg-input text-foreground focus:ring-primary"
                 autoFocus
+              />
+            </div>
+             <div>
+              <label htmlFor="sessionId">ENTER SESSION ID:</label>
+              <Input
+                id="sessionId"
+                type="text"
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                className="mt-1 bg-input text-foreground focus:ring-primary"
               />
             </div>
             <Button type="submit" className="w-full bg-accent text-accent-foreground hover:bg-primary hover:text-primary-foreground">

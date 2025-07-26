@@ -185,7 +185,7 @@ function LoginScreen({ onLogin, booting, setBooting }: { onLogin: (name: string)
   if (booting) {
     return (
         <div className="flex items-center justify-center h-screen w-screen">
-            <Autotype text="INITIALIZING WHISPERNET v1.0..." />
+            <Autotype text="INITIALIZING TTCLI v1.0..." />
         </div>
     )
   }

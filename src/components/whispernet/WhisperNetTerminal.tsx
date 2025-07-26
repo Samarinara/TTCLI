@@ -22,8 +22,9 @@ export function WhisperNetTerminal() {
 
   // --- Firebase Listeners ---
   useEffect(() => {
-    if (!firebaseConfigured || !db) return;
+    if (!firebaseConfigured || !db || !currentUser) return;
 
+    // Set up listeners only when a user is logged in
     const usersRef = ref(db, 'users');
     const messagesRef = ref(db, 'messages');
     const gmIdRef = ref(db, 'gmId');
@@ -37,23 +38,20 @@ export function WhisperNetTerminal() {
       const data = snapshot.val();
       const loadedMessages: Message[] = [];
       if (data) {
-        for(const id in data) {
-            loadedMessages.push({ id, ...data[id] });
+        for (const id in data) {
+          loadedMessages.push({ id, ...data[id] });
         }
       }
-      // Sort messages by timestamp
-      loadedMessages.sort((a: any, b: any) => a.timestamp - b.timestamp);
+      loadedMessages.sort((a, b) => a.timestamp - b.timestamp);
       setMessages(loadedMessages);
     });
 
     const gmIdListener = onValue(gmIdRef, (snapshot) => {
-      const data = snapshot.val();
-      setGmId(data);
-      if (currentUser) {
-        setIsGm(currentUser.id === data);
-      }
+      const newGmId = snapshot.val();
+      setGmId(newGmId);
     });
 
+    // Cleanup function
     return () => {
       usersListener();
       messagesListener();
@@ -61,12 +59,21 @@ export function WhisperNetTerminal() {
     };
   }, [currentUser, firebaseConfigured]);
 
+  // Effect to update isGm state whenever gmId or currentUser changes
+  useEffect(() => {
+    if (currentUser && gmId) {
+      setIsGm(currentUser.id === gmId);
+    } else {
+      setIsGm(false);
+    }
+  }, [currentUser, gmId]);
+
+
   // --- Core Actions ---
   const handleLogin = (name: string) => {
     if (!firebaseConfigured || !db) return;
     const newUser: User = { id: crypto.randomUUID(), name };
-    setCurrentUser(newUser);
-
+    
     const userRef = ref(db, `users/${newUser.id}`);
     set(userRef, newUser);
     onDisconnect(userRef).remove();
@@ -75,22 +82,24 @@ export function WhisperNetTerminal() {
     onValue(gmIdRef, (snapshot) => {
       if (!snapshot.exists()) {
         set(gmIdRef, newUser.id);
-        setIsGm(true);
-        addMessage(`SYSTEM: ${newUser.name} has initiated the session as Game Master.`, 'system');
-         onDisconnect(gmIdRef).remove(); // If GM disconnects, clear the GM ID
+        addMessage(`SYSTEM: ${name} has initiated the session as Game Master.`, 'system');
+        onDisconnect(gmIdRef).remove(); // If GM disconnects, clear the GM ID
       } else {
-        addMessage(`SYSTEM: ${newUser.name} has connected.`, 'system');
+        addMessage(`SYSTEM: ${name} has connected.`, 'system');
       }
     }, { onlyOnce: true });
+    
+    // Set current user after setting up Firebase logic
+    setCurrentUser(newUser);
   };
 
   const addMessage = (text: string, type: Message['type'], sender?: string) => {
-    if (!firebaseConfigured || !db) return;
+    if (!firebaseConfigured || !db || !currentUser) return;
     const messagesRef = ref(db, 'messages');
     const newMessageRef = push(messagesRef);
     const newMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: object } = {
       text,
-      sender: sender || (currentUser?.name ?? "Unknown"),
+      sender: sender || currentUser.name,
       type,
       timestamp: serverTimestamp(),
     };
@@ -104,16 +113,14 @@ export function WhisperNetTerminal() {
 
     const gmIdRef = ref(db, 'gmId');
     set(gmIdRef, newGmId);
-    onDisconnect(gmIdRef).remove(); // Ensure the new GM is also removed on disconnect
+    // The new GM's onDisconnect is already set up when they logged in.
+    // We just need to remove the onDisconnect for the old GM's gmId reference.
+    onDisconnect(ref(db, 'gmId')).cancel();
+    onDisconnect(ref(db, `users/${newGmId}`)).remove(); // Ensure new GM is removed
+    onDisconnect(ref(db, 'gmId')).remove(); // And becomes the new GM to be removed
+
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
   };
-
-  useEffect(() => {
-    if (currentUser && gmId) {
-      setIsGm(currentUser.id === gmId);
-    }
-  }, [currentUser, gmId]);
-
 
   if (!firebaseConfigured) {
     return (
@@ -140,7 +147,7 @@ export function WhisperNetTerminal() {
     <div className="flex h-screen w-screen p-2 sm:p-4">
       <div className="flex flex-col md:flex-row w-full h-full border border-accent p-2 gap-4">
         <div className="flex-grow flex flex-col h-full overflow-hidden">
-          <MessageFeed messages={messages} currentUser={currentUser} isGm={isGm} users={users} gmId={gmId} />
+          <MessageFeed messages={messages} currentUser={currentUser} isGm={isGm} gmId={gmId} />
           <InputLine onSendMessage={addMessage} isGm={isGm} />
         </div>
         {isGm && <GmDashboard users={users} gmId={gmId} onTransferGm={transferGm} />}
@@ -206,7 +213,7 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
   );
 }
 
-function MessageFeed({ messages, currentUser, isGm, users, gmId }: { messages: Message[], currentUser: User, isGm: boolean, users: User[], gmId: string | null }) {
+function MessageFeed({ messages, currentUser, isGm, gmId }: { messages: Message[], currentUser: User, isGm: boolean, gmId: string | null }) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -219,13 +226,13 @@ function MessageFeed({ messages, currentUser, isGm, users, gmId }: { messages: M
   }, [messages]);
 
   const filteredMessages = messages.filter(msg => {
-    if (isGm) return true; // GM sees all messages
-    if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast messages
+    if (isGm) return true; // GM sees all
+    if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast
     if (msg.type === 'private') {
-        const gmUser = users.find(u => u.id === gmId);
-        // Show if you are the sender OR you are the recipient (the GM)
-        return msg.sender === currentUser.name || (gmUser && msg.sender === gmUser.name);
+        // Player sees their own private messages to GM
+        return msg.sender === currentUser.name;
     }
+    // Default to not showing other message types to non-GMs
     return false;
   });
 
@@ -254,9 +261,12 @@ function getPrefix(msg: Message, currentUser: User, isGm: boolean): string {
             return `[${senderName.toUpperCase()}] >`;
         case 'private':
              if (isGm) {
+                // GM sees who sent the DM
                 return `[DM from ${senderName.toUpperCase()}] >`;
+             } else {
+                // Player just sees their message to GM
+                return `[DM to GM] >`;
              }
-             return `[DM to GM] >`;
         default:
             return `[${senderName.toUpperCase()}] >`
     }

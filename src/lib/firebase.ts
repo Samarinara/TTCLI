@@ -5,13 +5,14 @@ import { getDatabase } from "firebase/database";
 // TODO: Add your own Firebase configuration from your project settings
 // https://firebase.google.com/docs/web/setup#available-libraries
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  databaseURL: "YOUR_DATABASE_URL",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  "projectId": "whispernet-32cr1",
+  "appId": "1:775917199401:web:0d99614946b7c793ddbc38",
+  "storageBucket": "whispernet-32cr1.firebasestorage.app",
+  "apiKey": "AIzaSyDc_-ZiIvgqI1LDWwA1YKMdbZUdkzrEwi8",
+  "authDomain": "whispernet-32cr1.firebaseapp.com",
+  "measurementId": "",
+  "messagingSenderId": "775917199401",
+  "databaseURL": "https://whispernet-32cr1.firebaseio.com"
 };
 
 // Initialize Firebase

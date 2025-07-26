@@ -216,7 +216,7 @@ function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], cur
   const filteredMessages = messages.filter(msg => {
     if (isGm) return true; // GM sees all messages
     if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast messages
-    if (msg.type === 'private' && msg.sender === currentUser.name) return true; // Players see their own private messages
+    if (msg.type === 'private' && (msg.sender === currentUser.name || msg.sender === 'SYSTEM')) return true; // Players see their own private messages and system messages
     return false;
   });
 
@@ -311,3 +311,5 @@ function GmDashboard({ users, gmId, onTransferGm }: { users: User[], gmId: strin
     </Card>
   );
 }
+
+    

@@ -3,7 +3,7 @@ import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: 'WhisperNet',
+  title: 'TTCLI',
   description: 'A terminal-style messaging app for GMs and players.',
 };
 

@@ -202,6 +202,15 @@ function LoginScreen({ onLogin }: { onLogin: (name: string, sessionId: string) =
       onLogin(name.trim(), sessionId.trim());
     }
   };
+  
+  if (booting) {
+    return (
+        <div className="flex items-center justify-center h-screen w-screen">
+            <Autotype text="INITIALIZING TTCLI v1.0..." />
+        </div>
+    )
+  }
+
 
   return (
     <div className="flex items-center justify-center h-screen w-screen">

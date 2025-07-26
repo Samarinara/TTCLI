@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Autotype } from "./Autotype";
 import { Crown, Send, User as UserIcon, Users } from "lucide-react";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, onValue, set, push, onDisconnect, serverTimestamp, get } from "firebase/database";
+import { ref, onValue, set, push, onDisconnect, serverTimestamp, get, remove } from "firebase/database";
 
 // --- Main Terminal Component ---
 export function WhisperNetTerminal() {
@@ -45,7 +45,13 @@ export function WhisperNetTerminal() {
     onDisconnect(userRef).remove();
     
     // When the last user disconnects, remove the entire session
-    onDisconnect(sessionRef).remove();
+    const connectedUsersRef = ref(db, `sessions/${sessionId}/users`);
+    onDisconnect(connectedUsersRef).on('value', (snapshot) => {
+        if (snapshot.numChildren() <= 1) { // Will be 1 when this user is about to disconnect
+            onDisconnect(sessionRef).remove();
+        }
+    });
+
 
     const usersListener = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
@@ -75,6 +81,9 @@ export function WhisperNetTerminal() {
       usersListener();
       messagesListener();
       gmIdListener();
+      onDisconnect(userRef).cancel();
+      onDisconnect(connectedUsersRef).cancel();
+      onDisconnect(sessionRef).cancel();
     };
   }, [currentUser, sessionId, firebaseConfigured]);
 
@@ -98,6 +107,7 @@ export function WhisperNetTerminal() {
 
     const userRef = ref(db, `sessions/${newSessionId}/users/${newUser.id}`);
     const gmIdRef = ref(db, `sessions/${newSessionId}/gmId`);
+    const sessionRef = ref(db, `sessions/${newSessionId}`);
     
     // Check if this user is the first one in the session.
     const usersRef = ref(db, `sessions/${newSessionId}/users`);
@@ -109,6 +119,8 @@ export function WhisperNetTerminal() {
             set(gmIdRef, newUser.id);
             addMessage(`SYSTEM: ${name} has initiated session "${newSessionId}" as Game Master.`, 'system', 'system', newUser, newSessionId);
             onDisconnect(gmIdRef).remove();
+            // Since this is the first user, if they disconnect, the whole session should be removed.
+            onDisconnect(sessionRef).remove();
         } else {
             addMessage(`SYSTEM: ${name} has connected.`, 'system', 'system', newUser, newSessionId);
         }
@@ -202,15 +214,6 @@ function LoginScreen({ onLogin }: { onLogin: (name: string, sessionId: string) =
       onLogin(name.trim(), sessionId.trim());
     }
   };
-  
-  if (booting) {
-    return (
-        <div className="flex items-center justify-center h-screen w-screen">
-            <Autotype text="INITIALIZING TTCLI v1.0..." />
-        </div>
-    )
-  }
-
 
   return (
     <div className="flex items-center justify-center h-screen w-screen">

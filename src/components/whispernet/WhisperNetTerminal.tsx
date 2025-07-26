@@ -174,7 +174,7 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
     }
   };
 
-  if(booting) {
+  if (booting) {
     return (
         <div className="flex items-center justify-center h-screen w-screen">
             <Autotype text="INITIALIZING WHISPERNET v1.0..." />
@@ -330,5 +330,3 @@ function GmDashboard({ users, gmId, onTransferGm }: { users: User[], gmId: strin
     </Card>
   );
 }
-
-    

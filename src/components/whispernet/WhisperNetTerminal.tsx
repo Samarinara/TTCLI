@@ -32,7 +32,8 @@ export function WhisperNetTerminal() {
 
     const usersListener = onValue(usersRef, (snapshot) => {
       const data = snapshot.val();
-      setUsers(data ? Object.values(data) : []);
+      const userList = data ? Object.values(data) as User[] : [];
+      setUsers(userList);
     });
 
     const messagesListener = onValue(messagesRef, (snapshot) => {
@@ -71,24 +72,22 @@ export function WhisperNetTerminal() {
 
 
   // --- Core Actions ---
-  const handleLogin = (name: string) => {
+  const handleLogin = async (name: string) => {
     if (!firebaseConfigured || !db) return;
     const newUser: User = { id: crypto.randomUUID(), name };
     
     const userRef = ref(db, `users/${newUser.id}`);
     const messagesRef = ref(db, 'messages');
+    const usersRef = ref(db, 'users');
 
     // When the user disconnects, remove them from the user list.
     onDisconnect(userRef).remove();
-
-    // Check if this is the last user. If so, set onDisconnect to clear messages.
-    const usersRef = ref(db, 'users');
-    onDisconnect(usersRef).on('value', (snapshot) => {
-        if (snapshot.numChildren() <= 1) {
-            onDisconnect(messagesRef).remove();
-        }
-    });
-
+    
+    // Check if this is the only user. If so, set onDisconnect to clear messages.
+    const snapshot = await get(usersRef);
+    if (!snapshot.exists() || snapshot.numChildren() === 0) {
+        onDisconnect(messagesRef).remove();
+    }
 
     set(userRef, newUser).then(() => {
         const gmIdRef = ref(db, 'gmId');
@@ -176,17 +175,16 @@ export function WhisperNetTerminal() {
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin, booting: initialBooting, setBooting: setParentBooting }: { onLogin: (name: string) => void, booting: boolean, setBooting: (b: boolean) => void }) {
+function LoginScreen({ onLogin, booting, setBooting }: { onLogin: (name: string) => void, booting: boolean, setBooting: (b: boolean) => void }) {
   const [name, setName] = useState('');
-  const [booting, setBooting] = useState(true);
-
+  
   useEffect(() => {
+      if (!booting) return;
       const timer = setTimeout(() => {
           setBooting(false);
-          setParentBooting(false);
       }, 1500);
       return () => clearTimeout(timer);
-  }, [setParentBooting]);
+  }, [booting, setBooting]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,7 +200,6 @@ function LoginScreen({ onLogin, booting: initialBooting, setBooting: setParentBo
         </div>
     )
   }
-
 
   return (
     <div className="flex items-center justify-center h-screen w-screen">

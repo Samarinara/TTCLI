@@ -35,10 +35,15 @@ export function WhisperNetTerminal() {
 
     const messagesListener = onValue(messagesRef, (snapshot) => {
       const data = snapshot.val();
-      const loadedMessages = data ? Object.values(data) : [];
+      const loadedMessages: Message[] = [];
+      if (data) {
+        for(const id in data) {
+            loadedMessages.push({ id, ...data[id] });
+        }
+      }
       // Sort messages by timestamp
       loadedMessages.sort((a: any, b: any) => a.timestamp - b.timestamp);
-      setMessages(loadedMessages as Message[]);
+      setMessages(loadedMessages);
     });
 
     const gmIdListener = onValue(gmIdRef, (snapshot) => {
@@ -216,15 +221,15 @@ function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], cur
   const filteredMessages = messages.filter(msg => {
     if (isGm) return true; // GM sees all messages
     if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast messages
-    if (msg.type === 'private' && (msg.sender === currentUser.name || msg.sender === 'SYSTEM')) return true; // Players see their own private messages and system messages
+    if (msg.type === 'private' && (msg.sender === currentUser.name || msg.sender === 'SYSTEM' || msg.sender === (users.find(u=>u.id === gmId)?.name)  )) return true;
     return false;
   });
 
   return (
     <ScrollArea className="flex-grow p-2" ref={scrollAreaRef}>
       <div className="space-y-2">
-        {filteredMessages.map((msg, index) => (
-          <div key={msg.id || index}>
+        {filteredMessages.map((msg) => (
+          <div key={msg.id}>
             <Autotype
               text={`${getPrefix(msg, currentUser, isGm)} ${msg.text}`}
               className={msg.type === 'system' ? 'text-accent-foreground' : ''}

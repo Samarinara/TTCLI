@@ -1,7 +1,7 @@
 "use client";
 
 import type { User, Message } from "@/lib/types";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +18,7 @@ export function WhisperNetTerminal() {
   const [users, setUsers] = useState<User[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [gmId, setGmId] = useState<string | null>(null);
+  const [booting, setBooting] = useState(true);
   const firebaseConfigured = isFirebaseConfigured();
 
   // --- Firebase Listeners ---
@@ -82,10 +83,10 @@ export function WhisperNetTerminal() {
     onValue(gmIdRef, (snapshot) => {
       if (!snapshot.exists()) {
         set(gmIdRef, newUser.id);
-        addMessage(`SYSTEM: ${name} has initiated the session as Game Master.`, 'system');
+        addMessage(`SYSTEM: ${name} has initiated the session as Game Master.`, 'system', 'system', newUser);
         onDisconnect(gmIdRef).remove(); // If GM disconnects, clear the GM ID
       } else {
-        addMessage(`SYSTEM: ${name} has connected.`, 'system');
+        addMessage(`SYSTEM: ${name} has connected.`, 'system', 'system', newUser);
       }
     }, { onlyOnce: true });
     
@@ -93,13 +94,15 @@ export function WhisperNetTerminal() {
     setCurrentUser(newUser);
   };
 
-  const addMessage = (text: string, type: Message['type'], sender?: string) => {
-    if (!firebaseConfigured || !db || !currentUser) return;
+  const addMessage = (text: string, type: Message['type'], senderName?: string, user?: User) => {
+    const sender = user || currentUser;
+    if (!firebaseConfigured || !db || !sender) return;
+
     const messagesRef = ref(db, 'messages');
     const newMessageRef = push(messagesRef);
     const newMessage: Omit<Message, 'id' | 'timestamp'> & { timestamp: object } = {
       text,
-      sender: sender || currentUser.name,
+      sender: senderName || sender.name,
       type,
       timestamp: serverTimestamp(),
     };
@@ -115,9 +118,15 @@ export function WhisperNetTerminal() {
     set(gmIdRef, newGmId);
     // The new GM's onDisconnect is already set up when they logged in.
     // We just need to remove the onDisconnect for the old GM's gmId reference.
-    onDisconnect(ref(db, 'gmId')).cancel();
-    onDisconnect(ref(db, `users/${newGmId}`)).remove(); // Ensure new GM is removed
-    onDisconnect(ref(db, 'gmId')).remove(); // And becomes the new GM to be removed
+    const oldGmRef = ref(db, 'gmId');
+    onDisconnect(oldGmRef).cancel(); // Cancel the old onDisconnect
+    
+    // Set the new onDisconnect for the new GM
+    const newGmUserRef = ref(db, `users/${newGmId}`);
+    onDisconnect(newGmUserRef).remove();
+    const newGmIdRef = ref(db, 'gmId');
+    onDisconnect(newGmIdRef).remove();
+
 
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
   };
@@ -140,14 +149,14 @@ export function WhisperNetTerminal() {
   }
   
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} booting={booting} setBooting={setBooting}/>;
   }
 
   return (
     <div className="flex h-screen w-screen p-2 sm:p-4">
       <div className="flex flex-col md:flex-row w-full h-full border border-accent p-2 gap-4">
         <div className="flex-grow flex flex-col h-full overflow-hidden">
-          <MessageFeed messages={messages} currentUser={currentUser} isGm={isGm} gmId={gmId} />
+          <MessageFeed messages={messages} currentUser={currentUser} isGm={isGm} />
           <InputLine onSendMessage={addMessage} isGm={isGm} />
         </div>
         {isGm && <GmDashboard users={users} gmId={gmId} onTransferGm={transferGm} />}
@@ -158,14 +167,13 @@ export function WhisperNetTerminal() {
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
+function LoginScreen({ onLogin, booting, setBooting }: { onLogin: (name: string) => void, booting: boolean, setBooting: (b: boolean) => void }) {
   const [name, setName] = useState('');
-  const [booting, setBooting] = useState(true);
-
+  
   useEffect(() => {
     const timer = setTimeout(() => setBooting(false), 1500);
     return () => clearTimeout(timer);
-  }, []);
+  }, [setBooting]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,7 +181,7 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
       onLogin(name.trim());
     }
   };
-
+  
   if (booting) {
     return (
         <div className="flex items-center justify-center h-screen w-screen">
@@ -181,6 +189,7 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
         </div>
     )
   }
+
 
   return (
     <div className="flex items-center justify-center h-screen w-screen">
@@ -213,15 +222,13 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
   );
 }
 
-function MessageFeed({ messages, currentUser, isGm, gmId }: { messages: Message[], currentUser: User, isGm: boolean, gmId: string | null }) {
+function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], currentUser: User, isGm: boolean }) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
-
+  
   useEffect(() => {
-    if (scrollAreaRef.current) {
-        const viewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
-        if (viewport) {
-            viewport.scrollTop = viewport.scrollHeight;
-        }
+    const viewport = scrollAreaRef.current?.querySelector('div[data-radix-scroll-area-viewport]');
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
     }
   }, [messages]);
 
@@ -229,10 +236,8 @@ function MessageFeed({ messages, currentUser, isGm, gmId }: { messages: Message[
     if (isGm) return true; // GM sees all
     if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast
     if (msg.type === 'private') {
-        // Player sees their own private messages to GM
-        return msg.sender === currentUser.name;
+      return msg.sender === currentUser.name; // Player sees their own private messages to GM
     }
-    // Default to not showing other message types to non-GMs
     return false;
   });
 

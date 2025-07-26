@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Autotype } from "./Autotype";
 import { Crown, Send, User as UserIcon, Users } from "lucide-react";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { ref, onValue, set, push, onDisconnect, serverTimestamp } from "firebase/database";
+import { ref, onValue, set, push, onDisconnect, serverTimestamp, get } from "firebase/database";
 
 // --- Main Terminal Component ---
 export function WhisperNetTerminal() {
@@ -76,22 +76,34 @@ export function WhisperNetTerminal() {
     const newUser: User = { id: crypto.randomUUID(), name };
     
     const userRef = ref(db, `users/${newUser.id}`);
-    set(userRef, newUser);
+    const messagesRef = ref(db, 'messages');
+
+    // When the user disconnects, remove them from the user list.
     onDisconnect(userRef).remove();
 
-    const gmIdRef = ref(db, 'gmId');
-    onValue(gmIdRef, (snapshot) => {
-      if (!snapshot.exists()) {
-        set(gmIdRef, newUser.id);
-        addMessage(`SYSTEM: ${name} has initiated the session as Game Master.`, 'system', 'system', newUser);
-        onDisconnect(gmIdRef).remove(); // If GM disconnects, clear the GM ID
-      } else {
-        addMessage(`SYSTEM: ${name} has connected.`, 'system', 'system', newUser);
-      }
-    }, { onlyOnce: true });
-    
-    // Set current user after setting up Firebase logic
-    setCurrentUser(newUser);
+    // Check if this is the last user. If so, set onDisconnect to clear messages.
+    const usersRef = ref(db, 'users');
+    onDisconnect(usersRef).on('value', (snapshot) => {
+        if (snapshot.numChildren() <= 1) {
+            onDisconnect(messagesRef).remove();
+        }
+    });
+
+
+    set(userRef, newUser).then(() => {
+        const gmIdRef = ref(db, 'gmId');
+        onValue(gmIdRef, (snapshot) => {
+          if (!snapshot.exists()) {
+            set(gmIdRef, newUser.id);
+            addMessage(`SYSTEM: ${name} has initiated the session as Game Master.`, 'system', 'system', newUser);
+            onDisconnect(gmIdRef).remove();
+          } else {
+            addMessage(`SYSTEM: ${name} has connected.`, 'system', 'system', newUser);
+          }
+        }, { onlyOnce: true });
+        
+        setCurrentUser(newUser);
+    });
   };
 
   const addMessage = (text: string, type: Message['type'], senderName?: string, user?: User) => {
@@ -116,17 +128,14 @@ export function WhisperNetTerminal() {
 
     const gmIdRef = ref(db, 'gmId');
     set(gmIdRef, newGmId);
-    // The new GM's onDisconnect is already set up when they logged in.
-    // We just need to remove the onDisconnect for the old GM's gmId reference.
+    
+    // The old GM's onDisconnect for gmId needs to be cancelled.
     const oldGmRef = ref(db, 'gmId');
-    onDisconnect(oldGmRef).cancel(); // Cancel the old onDisconnect
+    onDisconnect(oldGmRef).cancel();
     
     // Set the new onDisconnect for the new GM
-    const newGmUserRef = ref(db, `users/${newGmId}`);
-    onDisconnect(newGmUserRef).remove();
     const newGmIdRef = ref(db, 'gmId');
     onDisconnect(newGmIdRef).remove();
-
 
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
   };
@@ -167,13 +176,17 @@ export function WhisperNetTerminal() {
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin, booting, setBooting }: { onLogin: (name: string) => void, booting: boolean, setBooting: (b: boolean) => void }) {
+function LoginScreen({ onLogin, booting: initialBooting, setBooting: setParentBooting }: { onLogin: (name: string) => void, booting: boolean, setBooting: (b: boolean) => void }) {
   const [name, setName] = useState('');
-  
+  const [booting, setBooting] = useState(true);
+
   useEffect(() => {
-    const timer = setTimeout(() => setBooting(false), 1500);
-    return () => clearTimeout(timer);
-  }, [setBooting]);
+      const timer = setTimeout(() => {
+          setBooting(false);
+          setParentBooting(false);
+      }, 1500);
+      return () => clearTimeout(timer);
+  }, [setParentBooting]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

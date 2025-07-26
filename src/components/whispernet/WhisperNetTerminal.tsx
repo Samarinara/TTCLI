@@ -20,6 +20,15 @@ export function WhisperNetTerminal() {
   const [gmId, setGmId] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
   const firebaseConfigured = isFirebaseConfigured();
+  
+  // Effect for client-side only boot sequence
+  useEffect(() => {
+    const timer = setTimeout(() => {
+        setBooting(false);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
 
   // --- Firebase Listeners ---
   useEffect(() => {
@@ -78,16 +87,17 @@ export function WhisperNetTerminal() {
     
     const userRef = ref(db, `users/${newUser.id}`);
     const messagesRef = ref(db, 'messages');
-    const usersRef = ref(db, 'users');
-
+    
     // When the user disconnects, remove them from the user list.
     onDisconnect(userRef).remove();
     
-    // Check if this is the only user. If so, set onDisconnect to clear messages.
+    // Check if this is the last user. If so, set onDisconnect to clear messages.
+    const usersRef = ref(db, 'users');
     const snapshot = await get(usersRef);
     if (!snapshot.exists() || snapshot.numChildren() === 0) {
         onDisconnect(messagesRef).remove();
     }
+
 
     set(userRef, newUser).then(() => {
         const gmIdRef = ref(db, 'gmId');
@@ -139,6 +149,14 @@ export function WhisperNetTerminal() {
     addMessage(`SYSTEM: GM powers transferred to ${newGm.name}.`, 'system');
   };
 
+  if (booting) {
+    return (
+        <div className="flex items-center justify-center h-screen w-screen">
+            <Autotype text="INITIALIZING WHISPERNET v1.0..." />
+        </div>
+    )
+  }
+
   if (!firebaseConfigured) {
     return (
         <div className="flex items-center justify-center h-screen w-screen p-4">
@@ -157,7 +175,7 @@ export function WhisperNetTerminal() {
   }
   
   if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} booting={booting} setBooting={setBooting}/>;
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
   return (
@@ -175,31 +193,15 @@ export function WhisperNetTerminal() {
 
 // --- Sub-components ---
 
-function LoginScreen({ onLogin, booting, setBooting }: { onLogin: (name: string) => void, booting: boolean, setBooting: (b: boolean) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
   const [name, setName] = useState('');
   
-  useEffect(() => {
-      if (!booting) return;
-      const timer = setTimeout(() => {
-          setBooting(false);
-      }, 1500);
-      return () => clearTimeout(timer);
-  }, [booting, setBooting]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (name.trim()) {
       onLogin(name.trim());
     }
   };
-  
-  if (booting) {
-    return (
-        <div className="flex items-center justify-center h-screen w-screen">
-            <Autotype text="INITIALIZING WHISPERNET v1.0..." />
-        </div>
-    )
-  }
 
   return (
     <div className="flex items-center justify-center h-screen w-screen">
@@ -299,14 +301,18 @@ function InputLine({ onSendMessage, isGm }: { onSendMessage: (text: string, type
     }
   };
 
+  const promptText = isGm ? "GM_BROADCAST" : "PRIVATE_MSG_GM";
+  const placeholderText = isGm ? "Broadcast a message to all players..." : "Send a private message to the GM...";
+
   return (
     <form onSubmit={handleSubmit} className="flex items-center gap-2 p-2 border-t border-accent">
-      <span className="text-shadow-glow">{isGm ? "GM_BROADCAST" : "DIRECT_MSG_GM"}:/&gt;</span>
+      <span className="text-shadow-glow">{promptText}:/&gt;</span>
       <Input
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
         className="flex-grow bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 text-foreground"
         autoComplete="off"
+        placeholder={placeholderText}
       />
       <Button type="submit" variant="ghost" size="icon">
         <Send className="h-4 w-4" />

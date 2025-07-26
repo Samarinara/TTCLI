@@ -48,7 +48,7 @@ export function WhisperNetTerminal() {
     // We listen to the user list. If it ever drops to 1, it means this client
     // is the last one. We then set onDisconnect to remove the whole session.
     const connectedUsersListener = onValue(usersRef, (snapshot) => {
-        if (snapshot.numChildren() <= 1) { 
+        if (snapshot.size <= 1) { 
             onDisconnect(sessionRef).remove();
         } else {
             // If more users join, we cancel the session removal on disconnect.

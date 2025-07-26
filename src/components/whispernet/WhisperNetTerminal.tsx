@@ -44,11 +44,15 @@ export function WhisperNetTerminal() {
     const userRef = ref(db, `sessions/${sessionId}/users/${currentUser.id}`);
     onDisconnect(userRef).remove();
     
-    // When the last user disconnects, remove the entire session
-    const connectedUsersRef = ref(db, `sessions/${sessionId}/users`);
-    onDisconnect(connectedUsersRef).on('value', (snapshot) => {
-        if (snapshot.numChildren() <= 1) { // Will be 1 when this user is about to disconnect
+    // When the last user disconnects, remove the entire session.
+    // We listen to the user list. If it ever drops to 1, it means this client
+    // is the last one. We then set onDisconnect to remove the whole session.
+    const connectedUsersListener = onValue(usersRef, (snapshot) => {
+        if (snapshot.numChildren() <= 1) { 
             onDisconnect(sessionRef).remove();
+        } else {
+            // If more users join, we cancel the session removal on disconnect.
+            onDisconnect(sessionRef).cancel();
         }
     });
 
@@ -81,8 +85,8 @@ export function WhisperNetTerminal() {
       usersListener();
       messagesListener();
       gmIdListener();
+      connectedUsersListener();
       onDisconnect(userRef).cancel();
-      onDisconnect(connectedUsersRef).cancel();
       onDisconnect(sessionRef).cancel();
     };
   }, [currentUser, sessionId, firebaseConfigured]);

@@ -12,7 +12,7 @@ const firebaseConfig = {
   "authDomain": "whispernet-32cr1.firebaseapp.com",
   "measurementId": "",
   "messagingSenderId": "775917199401",
-  "databaseURL": "https://whispernet-32cr1.firebaseio.com"
+  "databaseURL": "https://whispernet-32cr1-default-rtdb.firebaseio.com"
 };
 
 // Initialize Firebase
@@ -20,7 +20,12 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = firebaseConfig.apiKey !== 'YOUR_API_KEY' ? getDatabase(app) : null;
 
 function isFirebaseConfigured() {
-  return firebaseConfig.apiKey !== 'YOUR_API_KEY';
+  // A check for a placeholder value is not robust. 
+  // A better approach is to check if all necessary keys have non-empty values.
+  return firebaseConfig && 
+         firebaseConfig.apiKey && 
+         firebaseConfig.apiKey !== 'YOUR_API_KEY' &&
+         firebaseConfig.databaseURL;
 }
 
 export { db, isFirebaseConfigured };

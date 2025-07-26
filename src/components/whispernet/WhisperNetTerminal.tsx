@@ -140,7 +140,7 @@ export function WhisperNetTerminal() {
     <div className="flex h-screen w-screen p-2 sm:p-4">
       <div className="flex flex-col md:flex-row w-full h-full border border-accent p-2 gap-4">
         <div className="flex-grow flex flex-col h-full overflow-hidden">
-          <MessageFeed messages={messages} currentUser={currentUser} isGm={isGm} />
+          <MessageFeed messages={messages} currentUser={currentUser} isGm={isGm} users={users} gmId={gmId} />
           <InputLine onSendMessage={addMessage} isGm={isGm} />
         </div>
         {isGm && <GmDashboard users={users} gmId={gmId} onTransferGm={transferGm} />}
@@ -206,7 +206,7 @@ function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
   );
 }
 
-function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], currentUser: User, isGm: boolean }) {
+function MessageFeed({ messages, currentUser, isGm, users, gmId }: { messages: Message[], currentUser: User, isGm: boolean, users: User[], gmId: string | null }) {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -221,7 +221,11 @@ function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], cur
   const filteredMessages = messages.filter(msg => {
     if (isGm) return true; // GM sees all messages
     if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast messages
-    if (msg.type === 'private' && (msg.sender === currentUser.name || msg.sender === 'SYSTEM' || msg.sender === (users.find(u=>u.id === gmId)?.name)  )) return true;
+    if (msg.type === 'private') {
+        const gmUser = users.find(u => u.id === gmId);
+        // Show if you are the sender OR you are the recipient (the GM)
+        return msg.sender === currentUser.name || (gmUser && msg.sender === gmUser.name);
+    }
     return false;
   });
 

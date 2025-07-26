@@ -214,10 +214,10 @@ function MessageFeed({ messages, currentUser, isGm }: { messages: Message[], cur
   }, [messages]);
 
   const filteredMessages = messages.filter(msg => {
-      if (msg.type === 'system' || msg.type === 'broadcast') return true;
-      if (isGm) return true; // GM sees all
-      if (msg.sender === currentUser.name) return true; // Player sees their own DMs
-      return false;
+    if (isGm) return true; // GM sees all messages
+    if (msg.type === 'system' || msg.type === 'broadcast') return true; // Everyone sees system and broadcast messages
+    if (msg.type === 'private' && msg.sender === currentUser.name) return true; // Players see their own private messages
+    return false;
   });
 
   return (
